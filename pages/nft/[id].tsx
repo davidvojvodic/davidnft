@@ -1,17 +1,27 @@
-import React from 'react'
-import slika from '../../assets/slika.png'
+import React, {useState, useEffect} from 'react'
+import loader from '../../assets/867.gif'
 
-import { useAddress, useDisconnect, useMetamask } from '@thirdweb-dev/react'
+import { useAddress, useDisconnect, useMetamask, useContract } from '@thirdweb-dev/react'
 import { GetServerSideProps } from 'next'
 import { sanityClient, urlFor } from '../../sanity'
 import { Collection } from '../../typings'
 import Link from 'next/link'
+import { BigNumber } from 'ethers'
+import loadCustomRoutes from 'next/dist/lib/load-custom-routes'
+import toast, { Toaster } from 'react-hot-toast'
 
 interface Props {
     collection: Collection
 }
 
 const NFTDropPage = ({collection}: Props) => {
+  const [claimedSupply, setClaimedSupply] = useState<number>(0);
+  const [totalSupply, setTotalSupply] = useState<BigNumber>();
+  const [loading, setLoading] = useState(true);
+  const [price, setPrice] = useState<string>();
+
+  const nftDrop = useContract(collection.address, "nft-drop").contract
+
 
     // Auth
     const connectWithMetamask = useMetamask();
@@ -19,8 +29,93 @@ const NFTDropPage = ({collection}: Props) => {
     const disconnect = useDisconnect();
     // ---
 
+  useEffect(() => {
+    if (!nftDrop) return;
+
+    const fetchNFTDropData = async () => {
+      setLoading(true);
+
+      const claimed = await nftDrop.getAllClaimed();
+      const total = await nftDrop.totalSupply();
+
+      setClaimedSupply(claimed.length);
+      setTotalSupply(total);
+
+      setLoading(false);
+    }
+
+    fetchNFTDropData();
+  }, [nftDrop])
+  
+
+  useEffect(() => {
+    if (!nftDrop) return;
+
+    const fetchPrice = async () => {
+      const claimConditions = await nftDrop.claimConditions.getAll();
+
+      setPrice(claimConditions?.[0].currencyMetadata.displayValue)
+    }
+
+    fetchPrice();
+  }, [nftDrop])
+
+  const mintNft = () => {
+    if(!nftDrop || !address) return;
+
+    const quantity = 1; // how many unique NFTs you want to claim
+
+    setLoading(true);
+
+    const notification = toast.loading("Minting...", {
+      style: {
+        background: "white",
+        color: "green",
+        fontWeight: "bolder",
+        fontSize: "17px",
+        padding: "20px"
+      }
+    })
+
+    nftDrop.claimTo(address, quantity).then(async (tx) => {
+      const receipt = tx[0].receipt // the transaction receipt
+      const claimedTokenId = tx[0].id // the id of the NFT claimed
+      const claimedNFT = await tx[0].data() // (optional) get the claimed NFT metadata
+
+      toast("You Successfully minted!", {
+        duration: 8000,
+        style: {
+        background: "green",
+        color: "white",
+        fontWeight: "bolder",
+        fontSize: "17px",
+        padding: "20px"
+        }
+      })
+
+      console.log(receipt)
+      console.log(claimedTokenId)
+      console.log(claimedNFT)
+    }).catch(err => {
+      console.log(err)
+      toast("Something went wrong!", {
+        style: {
+          background: "red",
+          color: "white",
+          fontWeight: "bolder",
+          fontSize: "17px",
+          padding: "20px"
+        }
+      })
+    }).finally(() => {
+      setLoading(false);
+      toast.dismiss(notification)
+    })
+  }
+
   return (
     <div className='flex h-screen flex-col lg:grid lg:grid-cols-10'>
+      <Toaster position='bottom-center' />
         {/* Left side */}
         <div className='lg:col-span-4 bg-gradient-to-br from-cyan-800 to-rose-500'>
             <div className='flex flex-col items-center justify-center py-2 lg:min-h-screen'>
@@ -56,12 +151,30 @@ const NFTDropPage = ({collection}: Props) => {
             <div className='mt-10 flex flex-1 flex-col items-center space-y-6 text-center lg:space-y-0 lg:justify-center'>
                 <img className='w-80 object-cover pb-10 lg:h-80 lg:w-96' src={urlFor(collection.mainImage).url()} alt="kolaz" />
                 <h1 className='text-3xl font-bold lg:text-5xl lg:font-extrabold'>{collection.title}</h1>
-                <p className='pt-2 text-xl text-green-500'>0 / 20 NFT's claimed</p>
+
+                {loading ? (
+                  <p className='pt-2 text-xl text-green-500 animate-bounce'>Loading Supply Count...</p>
+                ) : (
+                  <p className='pt-2 text-xl text-green-500'>{claimedSupply} / {totalSupply?.toString()} NFT's claimed</p>
+                )}
+
+                {loading && (
+                  <img className='object-contain' src={loader.src} alt="loader" />
+                )}
+                
             </div>
 
             {/* MINT BUTTON */}
-            <button className='h-16 w-full bg-red-500 text-white rounded-full mt-10 font-bold'>
-                Mint NFT
+            <button onClick={mintNft} disabled={loading || claimedSupply === totalSupply?.toNumber() || !address} className='h-16 w-full bg-red-500 text-white rounded-full mt-10 font-bold disabled:bg-gray-400'>
+                  {loading ? (
+                    <>Loading</>
+                  ) : claimedSupply === totalSupply?.toNumber() ? (
+                    <>SOLD OUT</>
+                  ) : !address ? (
+                    <>Sign in to Mint </>
+                  ) : (
+                    <span className='font-bold'>Mint NFT ({price})</span>
+                  )}
             </button>
         </div>
     </div>
